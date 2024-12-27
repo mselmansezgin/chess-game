@@ -43,15 +43,19 @@ class ChessGUI:
         self.BUTTON_CLICK = (80, 80, 80)
         
         # Butonları küçült ve aşağıya taşı
-        button_width = 100  # 140'tan 100'e düşürüldü
-        button_height = 30  # 40'tan 30'a düşürüldü
+        button_width = 100
+        button_height = 30
         button_x = self.BOARD_SIZE + (self.CAPTURED_WIDTH - button_width) // 2
-        button_start_y = self.BOARD_SIZE - (3 * button_height + 20)  # En altta 20 piksel boşluk bırak
+        button_start_y = self.BOARD_SIZE - (3 * button_height + 20)  # En altta 20 piksel boşluk
         
-        # Butonları oluştur
+        # Ana butonlar (Kaydet/Yükle/Çıkış)
         self.save_button = pygame.Rect(button_x, button_start_y, button_width, button_height)
         self.load_button = pygame.Rect(button_x, button_start_y + button_height + 5, button_width, button_height)
         self.exit_button = pygame.Rect(button_x, button_start_y + 2 * (button_height + 5), button_width, button_height)
+        
+        # Geri/İleri butonları
+        self.undo_button = pygame.Rect(button_x, button_start_y - (button_height + 5), button_width//2 - 2, button_height)
+        self.redo_button = pygame.Rect(button_x + button_width//2 + 2, button_start_y - (button_height + 5), button_width//2 - 2, button_height)
         
         # Saves klasörünü oluştur
         self.saves_dir = "saves"
@@ -61,6 +65,7 @@ class ChessGUI:
         # Yeni renkler ekleyelim
         self.POSSIBLE_MOVE = (130, 151, 105, 128)  # Son değer (128) alpha/transparanlık için
         self.MOVE_INDICATOR = (100, 100, 100)
+        self.CHECK_COLOR = (230, 100, 50)  # Koyu turuncu renk - şah durumu için
         
         # Olası hamleleri tutacak liste
         self.possible_moves = []
@@ -141,8 +146,8 @@ class ChessGUI:
         # Oyuncu isimlerini ve sırayı göster
         current_player = self.white_player if self.game.current_turn == 'white' else self.black_player
         turn_text = self.font.render(f"Sıra: {current_player}", True, self.TEXT_COLOR)
-        # Sıra bilgisini butonların üzerine taşı
-        text_y = self.save_button.top - 40
+        # Sıra bilgisini geri/ileri butonlarının üstüne taşı
+        text_y = self.undo_button.top - 30
         self.screen.blit(turn_text, (self.BOARD_SIZE + 10, text_y))
 
     def load_pieces(self):
@@ -189,6 +194,13 @@ class ChessGUI:
                     pygame.draw.circle(self.screen, self.MOVE_INDICATOR, 
                                     (center_x, center_y), 8)
                     continue
+                
+                # Şah durumunu vurgula
+                piece = self.game.board[row][col]
+                if piece:
+                    if ((piece.symbol == '♔' and self.game.is_king_in_check('white')) or 
+                        (piece.symbol == '♚' and self.game.is_king_in_check('black'))):
+                        color = self.CHECK_COLOR
                 
                 pygame.draw.rect(self.screen, color,
                                (col * self.SQUARE_SIZE, 
@@ -305,6 +317,19 @@ class ChessGUI:
             text_surface = self.font.render(text, True, self.TEXT_COLOR)
             text_rect = text_surface.get_rect(center=button.center)
             self.screen.blit(text_surface, text_rect)
+        
+        # Geri/İleri butonları
+        for button, text in [
+            (self.undo_button, "←"),
+            (self.redo_button, "→")
+        ]:
+            mouse_pos = pygame.mouse.get_pos()
+            color = self.BUTTON_HOVER if button.collidepoint(mouse_pos) else self.BUTTON_COLOR
+            
+            pygame.draw.rect(self.screen, color, button)
+            text_surface = self.font.render(text, True, self.TEXT_COLOR)
+            text_rect = text_surface.get_rect(center=button.center)
+            self.screen.blit(text_surface, text_rect)
 
     def handle_button_click(self, pos):
         """Buton tıklamalarını işle"""
@@ -325,6 +350,22 @@ class ChessGUI:
                 if self.load_game(save_file):
                     print(f"Oyun yüklendi: {save_file}")
                     return True
+        
+        elif self.undo_button.collidepoint(pos):
+            success, message = self.game.undo_move()
+            if success:
+                # Yenen taşları da güncelle
+                self.update_captured_pieces()
+            print(message)
+            return True
+        
+        elif self.redo_button.collidepoint(pos):
+            success, message = self.game.redo_move()
+            if success:
+                # Yenen taşları da güncelle
+                self.update_captured_pieces()
+            print(message)
+            return True
         
         return None
 
@@ -516,13 +557,93 @@ class ChessGUI:
             
             pygame.display.flip()
 
+    def update_captured_pieces(self):
+        """Yenen taşları hamle geçmişine göre güncelle"""
+        self.captured_white = []
+        self.captured_black = []
+        
+        for i in range(self.game.current_move + 1):
+            _, _, captured_piece = self.game.move_history[i]
+            if captured_piece:
+                if captured_piece.color == 'white':
+                    self.captured_white.append(captured_piece)
+                else:
+                    self.captured_black.append(captured_piece)
+
+    def show_checkmate_dialog(self, winner):
+        """Şah mat durumunda kazananı gösteren dialog"""
+        dialog_width = 400
+        dialog_height = 200
+        dialog_x = (self.WINDOW_SIZE[0] - dialog_width) // 2
+        dialog_y = (self.WINDOW_SIZE[1] - dialog_height) // 2
+        
+        winner_name = self.white_player if winner == 'white' else self.black_player
+        message = f"ŞAH MAT! {winner_name} kazandı!"
+        
+        button_width = 150
+        button_height = 40
+        button = pygame.Rect(dialog_x + (dialog_width - button_width) // 2,
+                            dialog_y + dialog_height - button_height - 20,
+                            button_width, button_height)
+        
+        # Kazananı daha büyük fontla göster
+        big_font = pygame.font.SysFont('Arial', 32, bold=True)
+        
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if button.collidepoint(event.pos):
+                        return
+            
+            # Dialog arkaplanı
+            pygame.draw.rect(self.screen, self.SIDEBAR_COLOR, 
+                            (dialog_x, dialog_y, dialog_width, dialog_height))
+            pygame.draw.rect(self.screen, self.TEXT_COLOR, 
+                            (dialog_x, dialog_y, dialog_width, dialog_height), 2)
+            
+            # Şah Mat mesajı
+            text_surface = big_font.render("ŞAH MAT!", True, self.TEXT_COLOR)
+            text_rect = text_surface.get_rect(center=(dialog_x + dialog_width//2, 
+                                                    dialog_y + 50))
+            self.screen.blit(text_surface, text_rect)
+            
+            # Kazanan mesajı
+            winner_text = self.font.render(f"{winner_name} kazandı!", True, self.TEXT_COLOR)
+            winner_rect = winner_text.get_rect(center=(dialog_x + dialog_width//2, 
+                                                     dialog_y + 100))
+            self.screen.blit(winner_text, winner_rect)
+            
+            # Buton
+            pygame.draw.rect(self.screen, self.BUTTON_COLOR, button)
+            button_text = self.font.render("Tamam", True, self.TEXT_COLOR)
+            button_rect = button_text.get_rect(center=button.center)
+            self.screen.blit(button_text, button_rect)
+            
+            pygame.display.flip()
+
     def run(self):
         # Önce oyuncu isimlerini al
         if not self.get_player_names():
             return
 
         running = True
+        success = False  # success değişkenini başlangıçta tanımla
         while running:
+            # Mevcut durumda şah mat kontrolü yap
+            if self.game.current_turn == 'white':
+                if self.game.is_checkmate('white'):
+                    self.show_checkmate_dialog('black')  # Siyah kazandı
+                    running = False
+                    continue
+            else:
+                if self.game.is_checkmate('black'):
+                    self.show_checkmate_dialog('white')  # Beyaz kazandı
+                    running = False
+                    continue
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -540,6 +661,7 @@ class ChessGUI:
                     # Tahta tıklamalarını işle
                     board_pos = self.get_square_from_mouse(pos)
                     if board_pos[0] < 8 and board_pos[1] < 8:
+                        success = False  # Her hamle denemesinde success'i sıfırla
                         if self.selected_piece is None:
                             piece = self.game.board[board_pos[0]][board_pos[1]]
                             if piece and piece.color == self.game.current_turn:
@@ -565,12 +687,15 @@ class ChessGUI:
                             self.selected_pos = None
                             self.possible_moves = []
 
+                        # Hamle yapıldıktan sonra şah mat kontrolünü kaldır
+                        # (Çünkü her döngü başında kontrol ediyoruz)
+
             # Ekranı güncelle
             self.draw_board()
             self.draw_pieces()
             self.draw_captured_pieces()
             self.draw_player_info()
-            self.draw_buttons()  # Butonları çiz
+            self.draw_buttons()
             pygame.display.flip()
 
         pygame.quit()
