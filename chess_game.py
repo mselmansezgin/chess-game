@@ -219,6 +219,29 @@ class ChessBoard:
         game.current_turn = data['current_turn']
         return game
 
+    def get_valid_moves(self, from_pos):
+        """Seçilen pozisyondaki taşın gidebileceği tüm geçerli konumları döndür"""
+        valid_moves = []
+        from_row, from_col = from_pos
+        piece = self.board[from_row][from_col]
+        
+        if piece is None:
+            return valid_moves
+        
+        # Tahtadaki tüm kareleri kontrol et
+        for to_row in range(8):
+            for to_col in range(8):
+                to_pos = (to_row, to_col)
+                # Aynı pozisyonu atlayalım
+                if to_pos == from_pos:
+                    continue
+                
+                # Hamle geçerli mi kontrol et
+                if self.is_valid_move(from_pos, to_pos):
+                    valid_moves.append(to_pos)
+        
+        return valid_moves
+
 def main():
     game = ChessBoard()
     while True:

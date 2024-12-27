@@ -57,6 +57,13 @@ class ChessGUI:
         self.saves_dir = "saves"
         if not os.path.exists(self.saves_dir):
             os.makedirs(self.saves_dir)
+        
+        # Yeni renkler ekleyelim
+        self.POSSIBLE_MOVE = (130, 151, 105, 128)  # Son değer (128) alpha/transparanlık için
+        self.MOVE_INDICATOR = (100, 100, 100)
+        
+        # Olası hamleleri tutacak liste
+        self.possible_moves = []
 
     def get_player_names(self):
         # Kayıtlı oyun yükleme seçeneği ekle
@@ -162,6 +169,27 @@ class ChessGUI:
                 if self.selected_pos and self.selected_pos == (row, col):
                     color = self.HIGHLIGHT
                 
+                # Olası hamleleri vurgula
+                elif (row, col) in self.possible_moves:
+                    # Kare çiz
+                    pygame.draw.rect(self.screen, color,
+                                  (col * self.SQUARE_SIZE, 
+                                   row * self.SQUARE_SIZE,
+                                   self.SQUARE_SIZE, 
+                                   self.SQUARE_SIZE))
+                    
+                    # Yarı saydam yeşil overlay
+                    s = pygame.Surface((self.SQUARE_SIZE, self.SQUARE_SIZE), pygame.SRCALPHA)
+                    pygame.draw.rect(s, self.POSSIBLE_MOVE, s.get_rect())
+                    self.screen.blit(s, (col * self.SQUARE_SIZE, row * self.SQUARE_SIZE))
+                    
+                    # Merkeze nokta çiz
+                    center_x = col * self.SQUARE_SIZE + self.SQUARE_SIZE // 2
+                    center_y = row * self.SQUARE_SIZE + self.SQUARE_SIZE // 2
+                    pygame.draw.circle(self.screen, self.MOVE_INDICATOR, 
+                                    (center_x, center_y), 8)
+                    continue
+                
                 pygame.draw.rect(self.screen, color,
                                (col * self.SQUARE_SIZE, 
                                 row * self.SQUARE_SIZE,
@@ -219,7 +247,21 @@ class ChessGUI:
             'date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        filename = f"chess_save_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        # Dosya adını oluştur
+        current_time = datetime.now()
+        date_str = current_time.strftime("%Y-%m-%d")
+        time_str = current_time.strftime("%H-%M")
+        
+        # Oyuncu isimlerinden geçersiz karakterleri temizle
+        def clean_name(name):
+            # Dosya adı için uygun olmayan karakterleri kaldır veya değiştir
+            return ''.join(c if c.isalnum() or c in ['-', '_'] else '_' for c in name)
+        
+        white_name = clean_name(self.white_player)
+        black_name = clean_name(self.black_player)
+        
+        filename = f"{date_str}_{white_name}_vs_{black_name}_{time_str}.json"
+        
         filepath = os.path.join(self.saves_dir, filename)
         with open(filepath, 'w') as f:
             json.dump(game_state, f)
@@ -336,7 +378,8 @@ class ChessGUI:
 
     def show_load_game_menu(self):
         """Kayıtlı oyunları listele ve seçim yap"""
-        saves = sorted([f for f in os.listdir(self.saves_dir) if f.startswith('chess_save_')], reverse=True)
+        # Tüm .json dosyalarını al (sadece chess_save_ ile başlayanları değil)
+        saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')], reverse=True)
         if not saves:
             return None
         
@@ -345,9 +388,19 @@ class ChessGUI:
         menu_x = (self.WINDOW_SIZE[0] - menu_width) // 2
         menu_y = (self.WINDOW_SIZE[1] - menu_height) // 2
         
+        # Scroll bar ayarları
+        scroll_bar_width = 20
+        content_width = menu_width - scroll_bar_width - 40  # 40 piksel padding
+        
         button_height = 50
         visible_items = min(6, len(saves))
         scroll_position = 0
+        
+        # Scroll bar hesaplamaları
+        total_height = len(saves) * button_height
+        visible_height = visible_items * button_height
+        scroll_ratio = visible_height / total_height if total_height > visible_height else 1
+        scroll_bar_height = max(50, visible_height * scroll_ratio)
         
         while True:
             for event in pygame.event.get():
@@ -355,10 +408,32 @@ class ChessGUI:
                     return None
                 
                 if event.type == pygame.MOUSEBUTTONDOWN:
+                    mouse_pos = pygame.mouse.get_pos()
+                    
+                    # macOS touchpad scroll işlemi için
+                    if event.button in [4, 5]:  # 4: yukarı scroll, 5: aşağı scroll
+                        direction = -1 if event.button == 4 else 1
+                        scroll_position = max(0, min(scroll_position + direction, 
+                                                  len(saves) - visible_items))
+                        continue
+                    
                     # Geri dön butonu
                     back_button = pygame.Rect(menu_x + 20, menu_y + menu_height - 60, 100, 40)
-                    if back_button.collidepoint(event.pos):
+                    if back_button.collidepoint(mouse_pos):
                         return None
+                    
+                    # Scroll bar tıklama kontrolü
+                    scroll_bar_rect = pygame.Rect(
+                        menu_x + menu_width - scroll_bar_width - 10,
+                        menu_y + 70,
+                        scroll_bar_width,
+                        visible_height
+                    )
+                    if scroll_bar_rect.collidepoint(mouse_pos):
+                        # Scroll bar'a tıklandığında pozisyonu güncelle
+                        relative_y = (mouse_pos[1] - (menu_y + 70)) / visible_height
+                        scroll_position = int(relative_y * (len(saves) - visible_items))
+                        scroll_position = max(0, min(scroll_position, len(saves) - visible_items))
                     
                     # Kayıtlı oyunlar
                     for i in range(visible_items):
@@ -368,14 +443,14 @@ class ChessGUI:
                         
                         button = pygame.Rect(menu_x + 20, 
                                            menu_y + 70 + i * button_height, 
-                                           menu_width - 40, 
+                                           content_width,
                                            button_height - 5)
-                        if button.collidepoint(event.pos):
+                        if button.collidepoint(mouse_pos):
                             return saves[idx]
                 
-                # Scroll işlemi
-                if event.type == pygame.MOUSEWHEEL:
-                    scroll_position = max(0, min(scroll_position - event.y, 
+                # Mouse tekerleği için scroll işlemi
+                elif event.type == pygame.MOUSEWHEEL:
+                    scroll_position = max(0, min(scroll_position - event.y * 2,  # Scroll hızını artırmak için 2 ile çarptık
                                               len(saves) - visible_items))
             
             # Menü arkaplanı
@@ -389,6 +464,21 @@ class ChessGUI:
             title_rect = title.get_rect(center=(menu_x + menu_width//2, menu_y + 30))
             self.screen.blit(title, title_rect)
             
+            # Scroll bar arkaplanı
+            pygame.draw.rect(self.screen, self.BUTTON_COLOR,
+                            (menu_x + menu_width - scroll_bar_width - 10,
+                             menu_y + 70,
+                             scroll_bar_width,
+                             visible_height))
+            
+            # Scroll bar
+            scroll_pos = menu_y + 70 + (visible_height - scroll_bar_height) * (scroll_position / (len(saves) - visible_items)) if len(saves) > visible_items else menu_y + 70
+            pygame.draw.rect(self.screen, self.TEXT_COLOR,
+                            (menu_x + menu_width - scroll_bar_width - 10,
+                             scroll_pos,
+                             scroll_bar_width,
+                             scroll_bar_height))
+            
             # Kayıtlı oyunları listele
             for i in range(visible_items):
                 idx = scroll_position + i
@@ -397,7 +487,8 @@ class ChessGUI:
                 
                 save_file = saves[idx]
                 try:
-                    with open(save_file, 'r') as f:
+                    filepath = os.path.join(self.saves_dir, save_file)
+                    with open(filepath, 'r') as f:
                         data = json.load(f)
                         date = data.get('date', 'Tarih bilinmiyor')
                         white = data.get('white_player', 'Beyaz')
@@ -408,7 +499,7 @@ class ChessGUI:
                 
                 button = pygame.Rect(menu_x + 20, 
                                    menu_y + 70 + i * button_height, 
-                                   menu_width - 40, 
+                                   content_width,
                                    button_height - 5)
                 pygame.draw.rect(self.screen, self.BUTTON_COLOR, button)
                 
@@ -454,18 +545,25 @@ class ChessGUI:
                             if piece and piece.color == self.game.current_turn:
                                 self.selected_piece = piece
                                 self.selected_pos = board_pos
+                                # Olası hamleleri hesapla
+                                self.possible_moves = self.game.get_valid_moves(board_pos)
                         else:
-                            target = self.game.board[board_pos[0]][board_pos[1]]
-                            if target and target.color != self.selected_piece.color:
-                                if target.color == 'white':
-                                    self.captured_white.append(target)
-                                else:
-                                    self.captured_black.append(target)
+                            # Hamle yap
+                            if board_pos in self.possible_moves:  # Sadece geçerli hamlelere izin ver
+                                target = self.game.board[board_pos[0]][board_pos[1]]
+                                if target and target.color != self.selected_piece.color:
+                                    if target.color == 'white':
+                                        self.captured_white.append(target)
+                                    else:
+                                        self.captured_black.append(target)
+                                
+                                success, message = self.game.make_move(self.selected_pos, board_pos)
+                                print(message)
                             
-                            success, message = self.game.make_move(self.selected_pos, board_pos)
-                            print(message)
+                            # Seçimi ve olası hamleleri temizle
                             self.selected_piece = None
                             self.selected_pos = None
+                            self.possible_moves = []
 
             # Ekranı güncelle
             self.draw_board()
